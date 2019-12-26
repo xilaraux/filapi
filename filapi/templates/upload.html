@@ -4,33 +4,120 @@
   <title>Upload files</title>
 </head>
 <body>
-  <input type="file" name="file" id="stream">
+  <a href="/files/">Go to files</a>
+  <br><br>
+
+  <progress value="0" max="100"></progress>
+  <br><br>
+
+  <form method="POST">
+    <label> Upload mode: <br>
+      Full file <input type="radio" name="mode" value="full" checked>
+      <br>
+      Chunks <input type="radio" name="mode" value="chunk">
+    </label>
+    <br><br>
+
+    <input type="file" name="file" required>
+    <br><br>
+
+    <input type="submit" name="submit">
+  </form>
+
   <script type="text/javascript">
-    const stream = document.getElementById('stream');
-    stream.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      const kb5 = 50 * 1024;
+    const progressBar = document.querySelector('progress');
+    const fileForm = document.forms[0];
 
-      let start = 0;
-      let end = start + kb5;
-      while(start < file.size) {
-        if (end > file.size) end = file.size;
+    fileForm.addEventListener('submit', (e) => {
+      e.preventDefault();
 
-        const form = new FormData();
-        
-        form.append('s', start);
-        form.append('e', end);
-        form.append('name', file.name);
-        form.append('file', file.slice(start, end));
+      const formElements = e.target.elements;
+      const formMode = formElements.mode.value;
+      const formFiles = formElements.file.files;
 
-        fetch('http://localhost:5000/files/upload/stream/', {
-          method: 'POST',
-          body: form,
+
+      for (let file of Array.from(formFiles)) {
+        openFileTransaction(formMode, file).then(async (transactionID) => {
+          debugger;
+          progressBar.max = file.size;
+          await uploadFileByChunks(transactionID, file);
+          progressBar.value = 0;
         });
-        start = end;
-        end += kb5;
       }
+
+      e.target.reset();
     });
+
+    function openFileTransaction(mode, file) {
+      return fetch('/files/upload/transaction', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          mode,
+          file: {
+            name: file.name,
+            size: file.size,
+          },
+        }),
+      })
+      .then((data) => data.text());
+    }
+
+    const kb5 = 5 * 1024;
+    function uploadFileByChunks(transactionID, file) {
+      return new Promise(async (resolve, reject) => {
+        const size = file.size;
+
+        let start = 0;
+        let end = kb5;
+
+        while (start < size) {
+          progressBar.value = start;
+
+          if (end >= size) end = size + 1;
+
+          const chunk = file.slice(start, end);
+
+          const formData = new FormData();
+          formData.append('ID', transactionID);
+          formData.append('chunk', chunk);
+
+          // await second();
+
+          const response = await fetch('/files/upload/chunk', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const err = `${response.status}\t${response.statusText}`;
+            return reject(err);
+          }
+
+          const responseData = await response.json();
+
+          if (!responseData.ok) {
+            const err = `${responseData.status}\t${responseData.statusText}`;
+            return reject(err);
+          }
+
+          start = end;
+          end += kb5;
+        }
+        progressBar.value = start;
+
+        console.log(`${file.name} was sent`);
+        resolve(`${file.name} was sent`);
+      });
+    }
+
+    function second() {
+      return new Promise(resolve => {
+        setTimeout(() => resolve(), 2000);
+      });
+    }
   </script>
 </body>
 </html>
