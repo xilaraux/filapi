@@ -19,7 +19,7 @@ from sqlite3 import IntegrityError
 from filapi.db import get_db
 
 from werkzeug.utils import secure_filename
-from flask import Blueprint, request, current_app, redirect, url_for, abort, send_file, safe_join
+from flask import Blueprint, request, current_app, redirect, url_for, abort, send_file, safe_join, send_from_directory
 
 
 bp = Blueprint('files', __name__, url_prefix='/files')
@@ -103,6 +103,23 @@ def upload_file():
   if file and allowed_file(file.filename):
     save_file(upload_folder, file)
     return redirect(url_for('files.files'))
+
+
+@bp.route('/stream/')
+def files_stream():
+  return send_from_directory('templates', 'upload.html')
+
+
+@bp.route('/upload/stream/', methods=('GET', 'POST'))
+def upload_file_stream():
+  if request.method == 'GET':
+    return redirect(url_for('files.stream'))
+
+  b = request.files['file'].read()
+  with open(request.form['name'], 'wb') as f:
+    f.write(b)
+
+  return 'ok'
 
 
 @bp.route('/download/<string:filehash>/')

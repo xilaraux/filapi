@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Upload files</title>
+</head>
+<body>
+  <input type="file" name="file" id="stream">
+  <script type="text/javascript">
+    const stream = document.getElementById('stream');
+    stream.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      const kb5 = 50 * 1024;
+
+      let start = 0;
+      let end = start + kb5;
+      while(start < file.size) {
+        if (end > file.size) end = file.size;
+
+        const form = new FormData();
+        
+        form.append('s', start);
+        form.append('e', end);
+        form.append('name', file.name);
+        form.append('file', file.slice(start, end));
+
+        fetch('http://localhost:5000/files/upload/stream/', {
+          method: 'POST',
+          body: form,
+        });
+        start = end;
+        end += kb5;
+      }
+    });
+  </script>
+</body>
+</html>
