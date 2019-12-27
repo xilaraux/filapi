@@ -25,99 +25,181 @@
   </form>
 
   <script type="text/javascript">
-    const progressBar = document.querySelector('progress');
-    const fileForm = document.forms[0];
-
-    fileForm.addEventListener('submit', (e) => {
-      e.preventDefault();
-
-      const formElements = e.target.elements;
-      const formMode = formElements.mode.value;
-      const formFiles = formElements.file.files;
-
-
-      for (let file of Array.from(formFiles)) {
-        openFileTransaction(formMode, file).then(async (transactionID) => {
-          debugger;
-          progressBar.max = file.size;
-          await uploadFileByChunks(transactionID, file);
-          progressBar.value = 0;
-        });
+    class UploadError extends Error {
+      constructor(status, text) {
+        super();
+        this.message = `${status}\t${text}`;
       }
-
-      e.target.reset();
-    });
-
-    function openFileTransaction(mode, file) {
-      return fetch('/files/upload/transaction', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          mode,
-          file: {
-            name: file.name,
-            size: file.size,
-          },
-        }),
-      })
-      .then((data) => data.text());
     }
 
-    const kb5 = 5 * 1024;
-    function uploadFileByChunks(transactionID, file) {
-      return new Promise(async (resolve, reject) => {
+    class Progress {
+      static defaultOptions = { value: 0, max: 100 };
+
+      constructor(progressBar, options = Progress.defaultOptions) {
+        this.el = progressBar;
+
+        // init element
+        const { value, max } = options;
+
+        this.el.value = value;
+        this.el.max = max;
+      }
+
+      get val() {
+        return this.el.value;
+      }
+
+      set val(val) {
+        this.el.value = val;
+      }
+
+      set max(val) {
+        this.el.max = val;
+      }
+    }
+
+    class FileAPI {
+      static TRANSACTION_URL = '/files/upload/transaction';
+      static UPLOAD_CHUNK_URL = '/files/upload/chunk';
+      static UPLOAD_FILE_URL = '/files/upload/file';
+
+      static async requestTransaction(file) {
+        const response = await fetch(FileAPI.TRANSACTION_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            file: {
+              name: file.name,
+              size: file.size,
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          throw UploadError(response.status, response.statusText);
+        }
+
+        const transactionID = await response.text();
+        return transactionID;
+      }
+
+      static async uploadFile(transactionID, file) {
+        const formData = new FormData();
+        formData.append('ID', transactionID);
+        formData.append('file', file);
+
+        const response = await fetch(FileAPI.UPLOAD_FILE_URL, {
+          method: 'POST',
+          body: formData,
+        });
+
+        FileAPI.checkResponse(response);
+      }
+
+      static async uploadChunk(transactionID, chunk) {
+        const formData = new FormData();
+        formData.append('ID', transactionID);
+        formData.append('chunk', chunk);
+
+        const response = await fetch(FileAPI.UPLOAD_CHUNK_URL, {
+          method: 'POST',
+          body: formData,
+        });
+
+        FileAPI.checkResponse(response);
+      }
+
+      static async checkResponse(response) {
+        if (!response.ok) {
+          const { status, statusText } = response;
+          throw UploadError(status, statusText);
+        }
+
+        const responseData = await response.json();
+
+        if (!responseData.ok) {
+          const { status, statusText } = responseData;
+          throw UploadError(status, statusText);
+        }
+      }
+    }
+
+    class Uploader {
+      static FILE_MODE = 'file';
+      static CHUNK_MODE = 'chunk';
+
+      static FIVE_KB = 5 * 1024;
+
+      constructor(progress, fileAPI) {
+        this.API = fileAPI;
+        this.progress = progress;
+      }
+
+      async uploadFile(mode, file) {
+        this.progress.val = 0;
+        this.progress.max = file.size;
+
+        switch (mode) {
+          case Uploader.CHUNK_MODE:
+            return this.uploadByChunks(file);
+          case Uploader.FILE_MODE:
+          default:
+            return this.uploadAsFile(file);
+        }
+      }
+
+      async uploadByChunks(file) {
+        const transactionID =
+          await this.API.requestTransaction(file);
+
         const size = file.size;
 
         let start = 0;
-        let end = kb5;
+        let end = Uploader.FIVE_KB;
 
         while (start < size) {
-          progressBar.value = start;
-
           if (end >= size) end = size + 1;
 
           const chunk = file.slice(start, end);
+          await this.API.uploadChunk(transactionID, chunk);
 
-          const formData = new FormData();
-          formData.append('ID', transactionID);
-          formData.append('chunk', chunk);
-
-          // await second();
-
-          const response = await fetch('/files/upload/chunk', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!response.ok) {
-            const err = `${response.status}\t${response.statusText}`;
-            return reject(err);
-          }
-
-          const responseData = await response.json();
-
-          if (!responseData.ok) {
-            const err = `${responseData.status}\t${responseData.statusText}`;
-            return reject(err);
-          }
+          this.progress.val += end;
 
           start = end;
-          end += kb5;
+          end += Uploader.FIVE_KB;
         }
-        progressBar.value = start;
+      }
 
-        console.log(`${file.name} was sent`);
-        resolve(`${file.name} was sent`);
-      });
+      async uploadAsFile(file) {
+        const transactionID
+          = await this.API.requestTransaction(file);
+        await this.API.uploadFile(transactionID, file);
+      }
     }
 
-    function second() {
-      return new Promise(resolve => {
-        setTimeout(() => resolve(), 2000);
+    (function main() {
+      const progressEl = document.querySelector('progress');
+      const progress = new Progress(progressEl);
+      const uploader = new Uploader(progress, FileAPI);
+
+      const fileForm = document.forms[0];
+      fileForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const formElements = e.target.elements;
+        const formMode = formElements.mode.value;
+        const formFiles = formElements.file.files;
+
+
+        for (let file of Array.from(formFiles)) {
+          await uploader.uploadFile(formMode, file);
+        }
+
+        e.target.reset();
       });
-    }
+    }());
   </script>
 </body>
 </html>

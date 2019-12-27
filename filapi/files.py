@@ -85,6 +85,28 @@ def save_transaction_file(folder, transaction):
   save_file_to_db(filename, filesize, filehash)
 
 
+def check_transaction(transaction):
+  if not transaction:
+    error = {
+      'ok': False,
+      'status': 500,
+      'statusText': 'Transaction does not exist.'
+    }
+    return jsonify(error)
+
+  if time() >= transaction.get('exp'):
+    error = {
+      'ok': False,
+      'status': 500,
+      'statusText': 'Transaction has expiered.'
+    }
+    return jsonify(error)
+
+  return None
+
+
+# provide functionality of download through FETCH
+# https://javascript.info/fetch-progress
 @bp.route('/')
 def files():
   '''disply uploaded files with info'''
@@ -125,8 +147,11 @@ def upload_transaction():
   
   mode = data.get('mode', None)
   file = data.get('file')
-  finename = file.get('name')
+  filename = file.get('name')
   filesize = file.get('size')
+
+  if filename == '' or not allowed_file(filename):
+    return 'not ok'
 
   transaction = uuid4().hex
   hour = 60 * 60
@@ -134,7 +159,7 @@ def upload_transaction():
 
   transactions[transaction] = {
     'ID': transaction,
-    'name': finename,
+    'name': filename,
     'size': filesize,
     'exp': expiration,
     'received': 0
@@ -148,19 +173,20 @@ def upload_file():
   if request.method == 'GET':
     return redirect(url_for('files.files'))
 
+  transactionID = request.form.get('ID', None)
+  transaction = transactions.get(transactionID, None)
+
+  error = check_transaction(transaction)
+  if error:
+    return error
+
   upload_folder = current_app.config['UPLOAD_FOLDER']
-
-  if 'file' not in request.files:
-    return abort(500)
-
   file = request.files['file']
+  save_file(upload_folder, file)
 
-  if file.filename == '':
-    return abort(501)
-
-  if file and allowed_file(file.filename):
-    save_file(upload_folder, file)
-    return redirect(url_for('files.files'))
+  return jsonify({
+    'ok': True,
+  })
 
 
 @bp.route('/upload/chunk', methods=('GET', 'POST'))
@@ -171,21 +197,9 @@ def upload_chunk():
   transactionID = request.form.get('ID', None)
   transaction = transactions.get(transactionID, None)
 
-  if not transaction:
-    error = {
-      'ok': False,
-      'status': 500,
-      'statusText': 'Transaction does not exist.'
-    }
-    return jsonify(error)
-
-  if time() >= transaction.get('exp'):
-    error = {
-      'ok': False,
-      'status': 500,
-      'statusText': 'Transaction has expiered.'
-    }
-    return jsonify(error)
+  error = check_transaction(transaction)
+  if error:
+    return error
 
   upload_folder = current_app.config['UPLOAD_FOLDER']
   chunk = request.files['chunk'].read()
