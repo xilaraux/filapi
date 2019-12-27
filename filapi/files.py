@@ -7,7 +7,8 @@ ADD:
 + better web app with progress and buffer
 - x-file header support (nginx setup)
 - files uploaded by transaction can be uploaded multiple times (move to transaction id instead of hashes)
-- refactor code
+- refactor methods for saving files
+- create method for building error or success response
 
 https://flask.palletsprojects.com/en/1.1.x/patterns/fileuploads/
 '''
@@ -66,6 +67,16 @@ def save_file(folder, file):
     f.write(file_bytes)
 
   save_file_to_db(filename, filesize, filehash)
+
+
+def save_chunk(path, chunk):
+  if isfile(path):
+    with open(path, 'ab') as f:
+      f.write(chunk)
+  else:
+    with open(path, 'wb') as f:
+      f.write(chunk)
+  transaction['received'] += len(chunk)
 
 
 def save_transaction_file(folder, transaction):
@@ -137,6 +148,8 @@ def upload():
   return send_from_directory('templates', 'upload.html')
 
 
+# - move transactions to DB
+# - create jobs for cleaning up expiered transactions
 transactions= dict()
 @bp.route('/upload/transaction', methods=('GET', 'POST'))
 def upload_transaction():
@@ -146,7 +159,15 @@ def upload_transaction():
   data = request.json
   
   mode = data.get('mode', None)
-  file = data.get('file')
+
+  if not mode:
+    return 'not ok'
+
+  file = data.get('file', None)
+
+  if not file:
+    return 'not ok'
+
   filename = file.get('name')
   filesize = file.get('size')
 
@@ -182,7 +203,13 @@ def upload_file():
 
   upload_folder = current_app.config['UPLOAD_FOLDER']
   file = request.files['file']
+
+  if not file:
+    return 'not ok'
+
   save_file(upload_folder, file)
+
+  # delete finished transaction
 
   return jsonify({
     'ok': True,
@@ -201,21 +228,19 @@ def upload_chunk():
   if error:
     return error
 
+  chunk = request.files['chunk']
+
+  if not chunk:
+    return 'not ok'
+
   upload_folder = current_app.config['UPLOAD_FOLDER']
-  chunk = request.files['chunk'].read()
+  filepath = join(upload_folder, transactionID)
   
-  if isfile(join(upload_folder, transactionID)):
-    with open(join(upload_folder, transactionID), 'ab') as f:
-      transaction['received'] += len(chunk)
-      f.write(chunk)
-  else:
-    with open(join(upload_folder, transactionID), 'wb') as f:
-      transaction['received'] += len(chunk)
-      f.write(chunk)
+  save_chunk(filepath, chunk)
 
   if transaction['received'] == transaction['size']:
-    # print(f'{transaction.get("name")} uploaded')
     save_transaction_file(upload_folder, transaction)
+    del transactions[transactionID]
 
   return jsonify({
     'ok': True,
