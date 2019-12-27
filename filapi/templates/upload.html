@@ -85,17 +85,15 @@
         return transactionID;
       }
 
-      static async uploadFile(transactionID, file) {
+      static async uploadFile(transactionID, file, cb = console.log) {
         const formData = new FormData();
         formData.append('ID', transactionID);
         formData.append('file', file);
 
-        const response = await fetch(FileAPI.UPLOAD_FILE_URL, {
-          method: 'POST',
-          body: formData,
-        });
-
-        FileAPI.checkResponse(response);
+        const xhr = new XMLHttpRequest();
+        xhr.upload.onprogress = cb;
+        xhr.open('POST', FileAPI.UPLOAD_FILE_URL, true);
+        xhr.send(formData);
       }
 
       static async uploadChunk(transactionID, chunk) {
@@ -173,9 +171,12 @@
       }
 
       async uploadAsFile(file) {
+        console.log(file);
         const transactionID
           = await this.API.requestTransaction(file);
-        await this.API.uploadFile(transactionID, file);
+        this.API.uploadFile(transactionID, file, (e) => {
+          this.progress.val = e.loaded;
+        });
       }
     }
 
